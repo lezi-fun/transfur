@@ -276,16 +276,10 @@ export default function showMainWindow() {
     const closedBeforeReady = mainWindow === window && !rendererReady;
     clearMainWindow(window);
     if (closedBeforeReady) settleReadyWaiters(new Error('FurryFly window closed before its renderer finished loading.'));
-
-    // need to quit the entire app (i.e., including
-    // the HSD window) once the main window is closed
-    // on Windows
-    if (process.platform === 'win32') {
-      electron.app.quit();
-    }
+    // main.js owns window-all-closed handling, including reopening in smoke tests.
   });
 
-  window.loadURL(`file://${__dirname}/app.html`).catch(error => {
+  window.loadFile(path.join(__dirname, 'app.html')).catch(error => {
     if (mainWindow !== window) return;
     destroyWindow(window);
     settleReadyWaiters(error);
