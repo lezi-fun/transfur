@@ -102,10 +102,11 @@ test('no source file points at the upstream Sentry project or release feed', () 
 
 test('the preferred chain directory is absolute and outside the repository', () => {
   if (BRAND.chainDir === null) return;
-  const repoRoot = path.join(__dirname, '..', '..');
-  assert.match(String(BRAND.chainDir), /^[A-Za-z]:\\/, 'chainDir must be an absolute drive path');
-  assert.ok(
-    !path.resolve(BRAND.chainDir).startsWith(path.resolve(repoRoot)),
-    'chainDir must not point inside the repository',
-  );
+  assert.match(BRAND.chainDir, /^[A-Za-z]:\\/, 'chainDir must be an absolute Windows drive path');
+  assert.ok(path.win32.isAbsolute(BRAND.chainDir));
+  if (process.platform === 'win32') {
+    const relative = path.relative(path.join(__dirname, '..', '..'), BRAND.chainDir);
+    assert.ok(path.isAbsolute(relative) || relative.startsWith(`..${path.sep}`),
+      'chainDir must not point inside the repository');
+  }
 });

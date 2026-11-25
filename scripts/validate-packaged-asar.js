@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const asar = require('asar');
+const asar = require('@electron/asar');
 const {validateModuleGraph} = require('./validate-build-modules');
 
 function findAsars(root) {

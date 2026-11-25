@@ -202,7 +202,8 @@ export class NodeService extends EventEmitter {
     // Resolved on every start rather than persisted, so a machine where the
     // preferred drive is missing still falls back instead of pointing at nothing.
     const preferred = BRAND.chainDir;
-    if (preferred) {
+    // Windows drive paths are relative filenames on macOS, not data volumes.
+    if (process.platform === 'win32' && preferred && path.isAbsolute(preferred)) {
       try {
         fs.mkdirSync(preferred, {recursive: true});
         return preferred;

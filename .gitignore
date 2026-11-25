@@ -53,5 +53,6 @@ test-dist/
 SHA512SUMS*.txt
 
 # Local environment overrides
+.local-toolchain/
 .env
 .env.*

@@ -1,55 +1,126 @@
-# This workflow does a clean install of node dependencies, builds the source
-# code and runs tests. Windows only: this fork ships a Windows target.
-# For more information see:
-# https://help.github.com/actions/language-and-framework-guides/using-nodejs-with-github-actions
-
 name: Build and Test
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
-  workflow_dispatch:
+    branches: [main]
+  workflow_call:
+    inputs:
+      distribute:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
-  build-and-test:
-    runs-on: windows-2022
-    timeout-minutes: 120
-
+  desktop:
+    name: ${{ matrix.platform }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+            package-script: package-mac
+            extension: dmg
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+            package-script: package-mac
+            extension: dmg
+          - runner: windows-11-arm
+            platform: win32
+            arch: arm64
+            package-script: package-win
+            extension: exe
+          - runner: windows-2022
+            platform: win32
+            arch: x64
+            package-script: package-win
+            extension: msi
+    env:
+      # Public git dependencies in the npm lockfile use SSH URLs.
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: url.https://github.com/.insteadOf
+      GIT_CONFIG_VALUE_0: ssh://git@github.com/
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Use Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
+          architecture: ${{ matrix.arch }}
+          cache: npm
 
-      - name: Install npm packages
-        run: npm ci
-        env:
-          npm_config_with_gmp: "false"
-          GYP_DEFINES: "with_gmp=false"
+      - name: Verify native build host
+        run: node -e "const a=require('node:assert/strict'); a.equal(process.platform, '${{ matrix.platform }}'); a.equal(process.arch, '${{ matrix.arch }}'); console.log(process.version, process.platform, process.arch)"
 
-      - name: Force goosig mini-gmp
-        run: node scripts/force-goosig-mini-gmp.js
+      - name: Install pinned dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Build
-        run: npm run build
+      - name: Build Electron addons
+        run: npm run postinstall
 
-      - name: Validate compiled application modules
-        run: node scripts/validate-dist.js
+      - name: Validate the shipped translation
+        run: npm run check-locale -- zh-CN
 
-      - name: Validate maintained locales
-        run: |
-          npm run check-locale -- zh-CN
-          npm run check-locale -- ru-RU
-          npm run check-locale -- th-TH
-
-      - name: Test locale validator
+      - name: Test the locale validator
         run: node --test scripts/check-locale.test.js
 
-      - name: Test
+      - name: Run tests
         run: npm test
+
+      - name: Build and package
+        run: npm run ${{ (github.event_name == 'push' || inputs.distribute) && matrix.package-script || 'package-dir' }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Validate packaged modules
+        run: node scripts/validate-packaged-asar.js release/${{ matrix.platform }}-${{ matrix.arch }}
+
+      - name: Start and exercise the packaged app
+        run: npm run test:packaged-app
+
+      - name: Install and launch the Windows ARM64 installer
+        if: matrix.platform == 'win32' && matrix.arch == 'arm64' && (github.event_name == 'push' || inputs.distribute)
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem release/win32-arm64 -Filter *.exe -File)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one ARM64 installer' }
+          $installDir = Join-Path $env:RUNNER_TEMP FurryFlyARM64
+          if (Test-Path $installDir) { throw 'Install directory already exists' }
+          $installer = Start-Process -FilePath $installers[0].FullName -ArgumentList "/S /D=$installDir" -PassThru -Wait
+          if ($installer.ExitCode -ne 0) { throw "Installer exited $($installer.ExitCode)" }
+          $uninstaller = Join-Path $installDir 'Uninstall FurryFly.exe'
+          if (!(Test-Path $uninstaller)) { throw 'Installer did not create the expected uninstaller' }
+          try {
+            npm run test:packaged-app -- --installed "$installDir"
+            if ($LASTEXITCODE -ne 0) { throw 'Installed application smoke test failed' }
+          } finally {
+            $result = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait
+            if ($result.ExitCode -ne 0) { throw "Uninstaller exited $($result.ExitCode)" }
+            if (Test-Path (Join-Path $installDir FurryFly.exe)) { throw 'Uninstaller left the application installed' }
+          }
+
+      - name: Generate installer checksum
+        if: github.event_name == 'push' || inputs.distribute
+        run: node scripts/package-checksum.cjs release/${{ matrix.platform }}-${{ matrix.arch }} ${{ matrix.extension }}
+
+      - name: Upload installers
+        if: github.event_name == 'push' || inputs.distribute
+        uses: actions/upload-artifact@v4
+        with:
+          name: FurryFly-${{ matrix.platform }}-${{ matrix.arch }}
+          compression-level: 0
+          path: |
+            release/${{ matrix.platform }}-${{ matrix.arch }}/*.${{ matrix.extension }}
+            release/${{ matrix.platform }}-${{ matrix.arch }}/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14

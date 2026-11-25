@@ -56,6 +56,15 @@ dgram.createSocket = () => assert.fail('No UDP in embedded source fixture.');
 const services = {db: require('../../../app/background/db/service'),
   node: require('../../../app/background/node/service'),
   wallet: require('../../../app/background/wallet/service')};
+// These tiny regtest databases exercise restore admission, not disk headroom.
+// Keep the real storage service and production threshold untouched; only the
+// source fixture's filesystem capacity is synthetic. Storage tests cover low space.
+const {storageHealth} = require('../../../app/background/storage/service');
+storageHealth.statfs = async target => {
+  const relative = path.relative(root, fs.realpathSync(target));
+  assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+  return {bavail: 4 * 1024 * 1024, bsize: 4096};
+};
 const {installProductRuntime} = require('../../../app/background/packagedAcceptance/productRuntime');
 const {installAcceptanceBackendPolicy} = require('../../../app/background/packagedAcceptance/policy');
 const {configureLocalRegtest, seedDisposableMultiwallet} = require('../../../app/background/packagedAcceptance/fixture');

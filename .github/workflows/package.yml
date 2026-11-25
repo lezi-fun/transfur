@@ -3,88 +3,13 @@ name: Package for distribution
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    tags: ['v*']
 
 permissions:
-  attestations: write
   contents: read
-  id-token: write
 
 jobs:
-  package-windows:
-    name: Package Windows
-    runs-on: windows-2022
-    timeout-minutes: 300
-    env:
-      npm_config_with_gmp: "false"
-      GYP_DEFINES: "with_gmp=false"
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install npm packages
-        run: npm ci
-
-      - name: Force goosig mini-gmp
-        run: node scripts/force-goosig-mini-gmp.js
-
-      - name: Run tests
-        run: npm test
-
-      - name: Build Windows package
-        run: npm run package-win
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-
-      - name: Validate packaged application modules
-        shell: bash
-        run: node scripts/validate-packaged-asar.js release
-
-      - name: Generate checksums
-        shell: bash
-        run: |
-          cd release
-          node <<'NODE'
-          const fs = require('fs');
-          const crypto = require('crypto');
-
-          const skip = new Set(['builder-debug.yml', 'builder-effective-config.yaml', 'SHA256SUMS.txt']);
-          const files = fs.readdirSync('.')
-            .filter((file) => fs.statSync(file).isFile())
-            .filter((file) => !skip.has(file))
-            .sort();
-
-          const lines = files.map((file) => {
-            const hash = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-            return `${hash}  ${file}`;
-          });
-
-          fs.writeFileSync('SHA256SUMS.txt', `${lines.join('\n')}\n`);
-          NODE
-          cat SHA256SUMS.txt
-
-      - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Bob-windows
-          compression-level: 0
-          path: |
-            release/*.msi
-            release/latest*.yml
-            release/SHA256SUMS.txt
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Attest release artifacts
-        continue-on-error: true
-        uses: actions/attest@v4
-        with:
-          subject-checksums: release/SHA256SUMS.txt
+  package-desktop:
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      distribute: true

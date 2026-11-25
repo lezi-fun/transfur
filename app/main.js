@@ -64,20 +64,6 @@ let earlyStartupError = null;
 let runtimeModules = null;
 let startupFailureHandled = false;
 let pendingStartupDeeplinks = [];
-const appRuntimeHints = [
-  app.getName(),
-  process.execPath,
-  process.resourcesPath || '',
-  process.argv.join(' '),
-].join(' ');
-// Detects a branded build of this fork: the packaged app name, the packaged
-// appId, or either opt-in environment variable.
-const isLearnHnsForkBuild = process.env.BOB_LEARNHNS_TEST === 'true'
-  || process.env.BOB_LEARNHNS_FORK === 'true'
-  || appRuntimeHints.includes(BRAND.displayName)
-  || appRuntimeHints.includes(`${BRAND.displayName} Test`)
-  || appRuntimeHints.includes(BRAND.appId)
-  || appRuntimeHints.includes(`${BRAND.appId}Test`);
 
 let packagedAcceptanceConfig = null;
 try {
@@ -110,16 +96,14 @@ if (packagedErrorMonitor) {
   };
 }
 
-if (isLearnHnsForkBuild) {
-  process.env.BOB_LEARNHNS_FORK = 'true';
-  process.env.BOB_LEARNHNS_TEST = 'true';
-  app.setName(BRAND.displayName);
-  const smokeUserData = process.env.BOB_SMOKE_USER_DATA;
-  const isolatedUserData = isPackagedSmokeTest && smokeUserData && path.isAbsolute(smokeUserData)
-    ? smokeUserData
-    : packagedAcceptanceConfig?.userData;
-  app.setPath('userData', isolatedUserData || path.join(app.getPath('appData'), BRAND.userDataDirName));
-}
+// Source launches use the same identity and port offset as packaged FurryFly.
+process.env.BOB_LEARNHNS_TEST = 'true';
+app.setName(BRAND.displayName);
+const smokeUserData = process.env.BOB_SMOKE_USER_DATA;
+const isolatedUserData = isPackagedSmokeTest && smokeUserData && path.isAbsolute(smokeUserData)
+  ? smokeUserData
+  : packagedAcceptanceConfig?.userData;
+app.setPath('userData', isolatedUserData || path.join(app.getPath('appData'), BRAND.userDataDirName));
 
 try {
   if (!isPackagedTestMode) {
@@ -221,7 +205,7 @@ let deeplinkingUrl;
 const isPrimaryInstance = app.requestSingleInstanceLock();
 
 // Only the instance that owns the app may touch the registry.
-if (!isPackagedTestMode && isPrimaryInstance) {
+if (process.platform === 'win32' && !isPackagedTestMode && isPrimaryInstance) {
   adoptCompatProtocols();
 }
 
@@ -425,7 +409,7 @@ if (isPrimaryInstance) {
     app.on('window-all-closed', () => {
       // Respect the macOS convention of having the application in memory even
       // after all windows have been closed
-      if (process.platform !== 'darwin') {
+      if (process.platform !== 'darwin' && !isPackagedSmokeTest) {
         app.quit();
       }
     });
